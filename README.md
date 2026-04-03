@@ -160,6 +160,138 @@ uv run kozzle-word-grouper pool-info
 
 **`words_cache.json`** - Cached Korean words from Supabase
 
+### Category Compression Output
+
+**Compressed categories** using the `compress` command:
+
+```bash
+# Basic compression (normalize + merge duplicates)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed
+
+# With LLM-based semantic merging
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed
+
+# Without LLM merging (faster, only normalization)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed \
+  --no-llm-merge
+
+# Filter categories by minimum word count (keep only categories with >=80 words)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/filtered \
+  --min-word-count 80 \
+  --no-llm-merge
+
+# Full compression with LLM + filtering
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed_filtered \
+  --min-word-count 50
+```
+
+**Compression steps:**
+1. **Normalization**: Remove spaces from category names ("동 물" → "동물")
+2. **Merge duplicates**: Combine categories with same normalized name
+3. **LLM semantic grouping** (optional): Use LLM to group similar categories
+4. **Sort by word count**: Order categories by number of words (descending)
+5. **Filter by word count** (optional): Keep only categories with minimum words
+
+**`compressed_categories.json`** - Compressed output:
+
+```json
+{
+  "version": "2.0",
+  "metadata": {
+    "compression_timestamp": "2026-04-03T10:00:00Z",
+    "model": "exaone3.5:7.8b",
+    "use_llm_merge": true,
+    "original_categories": {
+      "하위개념": 11757,
+      "기능": 10491,
+      "사용맥락": 11868
+    },
+    "compressed_categories": {
+      "하위개념": 11106,
+      "기능": 9864,
+      "사용맥락": 11140
+    },
+    "compression_ratio": {
+      "하위개념": 0.06,
+      "기능": 0.06,
+      "사용맥락": 0.06
+    }
+  },
+  "compressed_categories": {
+    "하위개념": [
+      {
+        "category": "가족구성원",
+        "word_count": 110,
+        "words": [...],
+        "all_words_count": 110
+      }
+    ]
+  },
+  "merge_log": {
+    "하위개념": [
+      {
+        "final_category": "동물",
+        "merged_from": ["동물", "동 물", "동물류"],
+        "total_words": 123,
+        "llm_merged": true
+      }
+    ]
+  },
+  "categorizations": [...]
+}
+```
+
+**Category Filtering Example:**
+
+Filter categories by minimum word count to keep only meaningful categories:
+
+```bash
+# Filter: keep only categories with >= 80 words
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/filtered \
+  --min-word-count 80 \
+  --no-llm-merge
+```
+
+**Results with min_word_count=80:**
+
+```
+Before Filtering:
+  - 하위개념: 11,106 categories
+  - 기능: 9,864 categories
+  - 사용맥락: 11,140 categories
+
+After Filtering (>=80 words):
+  - 하위개념: 3 categories (99.97% reduction)
+    - 가족구성원: 110 words
+    - 시간: 105 words
+    - 의류: 96 words
+  - 기능: 2 categories (99.98% reduction)
+    - 감정표현: 160 words
+    - 시간표현: 103 words
+  - 사용맥락: 6 categories (99.95% reduction)
+    - 일상대화: 297 words
+    - 일상생활: 234 words
+    - 교육: 158 words
+    ...
+```
+
+**Recommended min_word_count Values:**
+- **50**: Keep more categories (~10-20 per type)
+- **80**: Keep only largest categories (~3-6 per type)
+- **100**: Keep only very common categories (~1-3 per type)
+
 ### Embedding Clustering Output
 
 **`word_groups.json`** - Clusters with Korean labels
@@ -249,6 +381,74 @@ def import_categorizations(supabase: Client, json_file: str):
 - **Total Time** (5874 words): ~12 minutes
 - **Memory**: ~500MB for embeddings
 
+### Category Compression
+
+- **Normalization Only** (--no-llm-merge): ~1 minute (5874 words, 11,757 categories)
+- **With LLM Merging**: ~10-15 minutes (depends on batch size and categories)
+- **Compression Ratio**: 5-6% (normalization), additional 10-30% (LLM merging)
+- **With Filtering** (--min-word-count=80): ~1 minute, 99%+ reduction for small categories
+
+## Typical Workflow
+
+### Step 1: Categorize Words
+
+```bash
+# First, categorize Korean words
+uv run kozzle-word-grouper categorize \
+  --filter-level 1 --filter-level 2 \
+  --min-lemma-length 2 \
+  --output-dir output
+```
+
+This creates:
+- `output/word_categorization.json` - Main categorization output
+- `output/categorization_cache.json` - For resume capability
+- `output/words_cache.json` - Cached word list
+
+### Step 2: Compress Categories (Optional)
+
+```bash
+# Compress categories to reduce redundancy
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed
+
+# Or without LLM merging (faster)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed \
+  --no-llm-merge
+```
+
+This creates:
+- `output/compressed/compressed_categories.json` - Compressed categories
+
+### Step 2b: Filter Categories (Optional)
+
+```bash
+# Keep only categories with 80+ words
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/filtered \
+  --min-word-count 80 \
+  --no-llm-merge
+```
+
+**Why filter?**
+- Removes noise from rare categories
+- Keeps only meaningful, well-populated categories
+- Dramatically reduces category count (99%+ reduction)
+- Easier to work with in downstream applications
+
+**Results with min_word_count=80:**
+- 하위개념: 11,106 → 3 categories (가족구성원, 시간, 의류)
+- 기능: 9,864 → 2 categories (감정표현, 시간표현)
+- 사용맥락: 11,140 → 6 categories (일상대화, 일상생활, 교육, ...)
+
+### Step 3: Import to Database
+
+Import either the original or compressed results into Supabase/PostgreSQL.
+
 ## Word Caching System
 
 The tool caches fetched Korean words to avoid repeated Supabase API calls:
@@ -334,11 +534,12 @@ kozzle-word-grouper/
 ├── src/kozzle_word_grouper/
 │   ├── __init__.py              # Package init
 │   ├── __main__.py              # Entry point
-│   ├── cli.py                   # CLI commands (categorize, group)
+│   ├── cli.py                   # CLI commands (categorize, group, compress)
 │   ├── core.py                  # Main pipeline orchestrator
 │   ├── supabase_client.py       # Supabase integration + connection pool
 │   ├── categorizer.py           # LLM categorization logic
 │   ├── category_aggregator.py   # Category aggregation and stats
+│   ├── category_compressor.py   # Category compression and merging
 │   ├── embeddings.py            # Ollama embedding generation
 │   ├── clustering.py            # HDBSCAN clustering
 │   ├── labeler.py                # Korean cluster label generation
@@ -409,6 +610,47 @@ Options:
   # Same as categorize, plus:
   -c, --min-cluster-size INTEGER  Minimum words per cluster
   --output-format [json|csv|summary]  Output formats
+```
+
+**`compress` command:**
+
+```bash
+uv run kozzle-word-grouper compress [OPTIONS]
+
+Options:
+  -i, --input-file PATH          Path to word_categorization.json  [required]
+  -o, --output-dir TEXT          Directory to save compressed output files
+  --model TEXT                  Ollama model for semantic merging
+  --ollama-host TEXT            Ollama server URL
+  --batch-size INTEGER          Number of categories per LLM call  [default: 50]
+  -m, --min-word-count INTEGER  Minimum words to keep a category (default: no filter)
+  --no-llm-merge               Disable LLM-based semantic merging
+```
+
+**Examples:**
+
+```bash
+# Compression only (no LLM, fastest)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --no-llm-merge
+
+# Compression with filtering (keep categories with >=80 words)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --min-word-count 80 \
+  --no-llm-merge
+
+# Full compression with LLM + filtering
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --min-word-count 50
+
+# Run overnight for large datasets
+nohup uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed \
+  > compression.log 2>&1 &
 ```
 
 ## Testing

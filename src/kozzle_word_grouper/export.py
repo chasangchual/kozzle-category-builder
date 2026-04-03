@@ -365,3 +365,95 @@ def export_categorization_results(
 
     except Exception as e:
         raise ExportError(f"Failed to export categorization results: {e}") from e
+
+
+def export_compressed_categories(
+    result: dict[str, Any],
+    output_dir: Path | str,
+    model_version: str = "exaone3.5:7.8b",
+    use_llm_merge: bool = True,
+) -> Path:
+    """Export compressed categories to JSON file.
+
+    Args:
+        result: Result from CategoryCompressor.compress_categories().
+        output_dir: Output directory.
+        model_version: Model version string.
+        use_llm_merge: Whether LLM merging was used.
+
+    Returns:
+        Path to exported JSON file.
+
+    Raises:
+        ExportError: If export fails.
+    """
+    output_dir = Path(output_dir)
+    ensure_directory(output_dir)
+
+    output_path = output_dir / "compressed_categories.json"
+
+    try:
+        compression_ratio = {}
+        original_stats = result.get("original_stats", {})
+        compressed_stats = result.get("statistics", {})
+
+        for class_type in ["하위개념", "기능", "사용맥락"]:
+            orig_count = original_stats.get(class_type, {}).get("total_categories", 0)
+            comp_count = compressed_stats.get(class_type, {}).get("total_categories", 0)
+
+            if orig_count > 0:
+                ratio = (orig_count - comp_count) / orig_count
+                compression_ratio[class_type] = round(ratio, 2)
+            else:
+                compression_ratio[class_type] = 0.0
+
+        compressed_categories = {}
+        for class_type in ["하위개념", "기능", "사용맥락"]:
+            compressed_categories[class_type] = []
+            if class_type in result.get("compressed_index", {}):
+                for category, words in result["compressed_index"][class_type].items():
+                    compressed_categories[class_type].append(
+                        {
+                            "category": category,
+                            "word_count": len(words),
+                            "words": words[:10],
+                            "all_words_count": len(words),
+                        }
+                    )
+
+        output_data = {
+            "version": "2.0",
+            "metadata": {
+                "compression_timestamp": datetime.now().isoformat() + "Z",
+                "model": model_version,
+                "use_llm_merge": use_llm_merge,
+                "original_categories": {
+                    class_type: original_stats.get(class_type, {}).get(
+                        "total_categories", 0
+                    )
+                    for class_type in ["하위개념", "기능", "사용맥락"]
+                },
+                "compressed_categories": {
+                    class_type: compressed_stats.get(class_type, {}).get(
+                        "total_categories", 0
+                    )
+                    for class_type in ["하위개념", "기능", "사용맥락"]
+                },
+                "compression_ratio": compression_ratio,
+            },
+            "compressed_categories": compressed_categories,
+            "merge_log": result.get("merge_log", {}),
+            "statistics": compressed_stats,
+            "categorizations": result.get("categorizations", []),
+        }
+
+        output_data = convert_to_native_types(output_data)
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Exported compressed categories to {output_path}")
+        return output_path
+
+    except Exception as e:
+        raise ExportError(f"Failed to export compressed categories: {e}") from e

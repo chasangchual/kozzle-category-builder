@@ -8,11 +8,16 @@ from typing import Any
 
 from kozzle_word_grouper.categorizer import Categorizer
 from kozzle_word_grouper.category_aggregator import CategoryAggregator
+from kozzle_word_grouper.category_compressor import CategoryCompressor
 from kozzle_word_grouper.clustering import WordClusterer
 from kozzle_word_grouper.connection_pool import close_connection_pool
 from kozzle_word_grouper.embeddings import EmbeddingGenerator
 from kozzle_word_grouper.exceptions import WordGrouperError
-from kozzle_word_grouper.export import WordGroupExporter, export_categorization_results
+from kozzle_word_grouper.export import (
+    WordGroupExporter,
+    export_categorization_results,
+    export_compressed_categories,
+)
 from kozzle_word_grouper.labeler import ClusterLabeler
 from kozzle_word_grouper.models import KoreanWord
 from kozzle_word_grouper.supabase_client import SupabaseClient
@@ -477,6 +482,98 @@ class WordGrouperPipeline:
             raise WordGrouperError(f"Categorization pipeline failed: {e}") from e
 
         finally:
-            # Close connection pool
             close_connection_pool()
             logger.info("Connection pool closed")
+
+    def run_category_compression(
+        self,
+        categorization_file: Path | str,
+        use_llm_merge: bool = True,
+        min_word_count: int | None = None,
+        output_dir: Path | str | None = None,
+        show_progress: bool = True,
+    ) -> dict[str, Any]:
+        """Run category compression pipeline.
+
+        Args:
+            categorization_file: Path to word_categorization.json.
+            use_llm_merge: Whether to use LLM for semantic merging.
+            min_word_count: Minimum number of words to keep a category (None = no filter).
+            output_dir: Output directory (default: same as input file).
+            show_progress: Whether to show progress.
+
+        Returns:
+            Dictionary with compressed results.
+
+        Raises:
+            WordGrouperError: If compression fails.
+        """
+        try:
+            categorization_file = Path(categorization_file)
+
+            if output_dir is None:
+                output_dir = categorization_file.parent
+            else:
+                output_dir = Path(output_dir)
+
+            ensure_directory(output_dir)
+
+            compressor = CategoryCompressor(
+                model_name=self.model_name,
+                ollama_host=self.ollama_host,
+                batch_size=50,
+                max_retries=3,
+                retry_delay=2.0,
+            )
+
+            logger.info(f"Loading categorization file: {categorization_file}")
+            data = compressor.load_categorization_file(categorization_file)
+
+            categorizations = {}
+            for item in data.get("categorizations", []):
+                public_id = item.get("public_id")
+                categorizations[public_id] = {
+                    "lemma": item.get("lemma", ""),
+                    "definition": item.get("definition"),
+                    "categories": item.get("categories", {}),
+                }
+
+            category_index = data.get("category_index", {})
+
+            if not category_index:
+                logger.info("Category index not found, rebuilding from categorizations")
+                aggregator = CategoryAggregator()
+                aggregated = aggregator.aggregate(categorizations)
+                category_index = aggregated["category_index"]
+
+            logger.info("Starting category compression...")
+            if use_llm_merge:
+                logger.info("Using LLM-based semantic merging")
+            if min_word_count is not None:
+                logger.info(f"Filtering categories with <{min_word_count} words")
+
+            result = compressor.compress_categories(
+                category_index=category_index,
+                categorizations=categorizations,
+                use_llm_merge=use_llm_merge,
+                min_word_count=min_word_count,
+                show_progress=show_progress,
+            )
+
+            logger.info(f"Exporting compressed results to {output_dir}")
+            output_path = export_compressed_categories(
+                result=result,
+                output_dir=output_dir,
+                model_version=self.model_name,
+                use_llm_merge=use_llm_merge,
+            )
+
+            logger.info(f"Compressed results exported to {output_path}")
+            logger.info("Category compression pipeline completed successfully")
+
+            result["output_path"] = output_path
+            return result
+
+        except Exception as e:
+            logger.error(f"Category compression failed: {e}")
+            raise WordGrouperError(f"Category compression failed: {e}") from e

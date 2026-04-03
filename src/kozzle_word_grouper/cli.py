@@ -395,6 +395,141 @@ def categorize(
 
 
 @main.command()
+@click.option(
+    "--input-file",
+    "-i",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to word_categorization.json file",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    default="./output",
+    help="Directory to save compressed output files",
+)
+@click.option(
+    "--model",
+    default="exaone3.5:7.8b",
+    help="Ollama model for semantic merging",
+)
+@click.option(
+    "--ollama-host",
+    default=None,
+    help="Ollama server URL (default: from env or localhost:11434)",
+)
+@click.option(
+    "--batch-size",
+    default=50,
+    type=int,
+    help="Number of categories per LLM call (default: 50)",
+)
+@click.option(
+    "--min-word-count",
+    "-m",
+    type=int,
+    default=None,
+    help="Minimum number of words to keep a category (default: no filter)",
+)
+@click.option(
+    "--no-llm-merge",
+    is_flag=True,
+    help="Disable LLM-based semantic merging (only normalize and merge exact duplicates)",
+)
+def compress(
+    input_file: str,
+    output_dir: str,
+    model: str,
+    ollama_host: str | None,
+    batch_size: int,
+    min_word_count: int | None,
+    no_llm_merge: bool,
+) -> None:
+    """Compress categories by normalizing, merging, and semantic grouping.
+
+    This command will:
+    1. Load categorizations from word_categorization.json
+    2. Remove spaces from category names (normalization)
+    3. Merge exact duplicate categories
+    4. Use LLM to group similar categories (optional)
+    5. Sort categories by word count (descending)
+    6. Filter categories by minimum word count (optional)
+    7. Export compressed results
+
+    Use --no-llm-merge to skip LLM-based semantic merging and only perform
+    normalization and exact duplicate merging.
+
+    Use --min-word-count to filter out categories with fewer words than specified.
+    """
+    logger = logging.getLogger(__name__)
+
+    try:
+        click.echo("Initializing category compressor...")
+        pipeline = WordGrouperPipeline(
+            model_name=model,
+            output_dir=Path(output_dir),
+            ollama_host=ollama_host,
+        )
+
+        click.echo(f"Loading categorization file: {input_file}")
+        click.echo(f"Using Ollama model: {model}")
+        click.echo(f"Batch size: {batch_size}")
+        click.echo(f"LLM-based merging: {'Disabled' if no_llm_merge else 'Enabled'}")
+        if min_word_count is not None:
+            click.echo(f"Minimum word count filter: {min_word_count} words")
+
+        result = pipeline.run_category_compression(
+            categorization_file=input_file,
+            use_llm_merge=not no_llm_merge,
+            min_word_count=min_word_count,
+            output_dir=output_dir,
+            show_progress=True,
+        )
+
+        click.echo("\n" + "=" * 60)
+        click.echo("카테고리 압축 완료 (Category Compression Complete)")
+        click.echo("=" * 60 + "\n")
+
+        original_stats = result.get("original_stats", {})
+        compressed_stats = result.get("statistics", {})
+
+        click.echo("Compression Statistics:\n")
+        for class_type in ["하위개념", "기능", "사용맥락"]:
+            orig_count = original_stats.get(class_type, {}).get("total_categories", 0)
+            comp_count = compressed_stats.get(class_type, {}).get("total_categories", 0)
+
+            if orig_count > 0:
+                reduction = orig_count - comp_count
+                ratio = (reduction / orig_count) * 100
+                click.echo(f"  {class_type}:")
+                click.echo(f"    Original: {orig_count} categories")
+                click.echo(f"    Compressed: {comp_count} categories")
+                click.echo(f"    Reduction: {reduction} categories ({ratio:.1f}%)")
+                click.echo()
+
+        click.echo("Top Categories After Compression:\n")
+        for class_type in ["하위개념", "기능", "사용맥락"]:
+            type_stats = compressed_stats.get(class_type, {})
+            top_10 = type_stats.get("top_10_categories", [])
+            if top_10:
+                click.echo(f"  {class_type}:")
+                for item in top_10[:5]:
+                    click.echo(f"    - {item['category']}: {item['count']} words")
+                click.echo()
+
+        click.echo("✓ Done! Output file: " + str(result["output_path"]))
+
+    except WordGrouperError as e:
+        click.echo(f"Error: {e}", err=True)
+        logger.exception("Word grouper error")
+        raise SystemExit(1)
+    except Exception as e:
+        click.echo(f"Unexpected error: {e}", err=True)
+        logger.exception("Unexpected error")
+        raise SystemExit(1)
+
+
+@main.command()
 def info() -> None:
     """Display information about Ollama models and configuration."""
     click.echo("Kozzle Word Grouper - Korean Word Clustering\n")
