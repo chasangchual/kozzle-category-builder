@@ -209,7 +209,6 @@ ENV/
 .env
 
 # Output
-output/
 *.npy
 
 # Testing

@@ -1,0 +1,58 @@
+============================================================
+한국어 단어 그룹 요약
+Korean Word Group Summary
+============================================================
+
+품질 지표 (Quality Metrics):
+----------------------------------------
+  그룹 수 (Number of clusters): 4
+  실루엣 점수 (Silhouette score): 0.5741
+  노이즈 비율 (Noise ratio): 17.53%
+
+그룹 상세 정보 (Cluster Details):
+----------------------------------------
+
+## 생활용품/공간
+   단어 수 (Word count): 2224
+   대표 단어 (Representative words): 중요, 약간, 변동, 귀가, 준비
+   단어 목록 (Sample words):
+     - 체계 (ID: b626731d-d493-426c-86ce-362af5e32238)
+     - 체력 (ID: 7d418c1a-e1c8-43e9-bce9-c22fa9743d9e)
+     - 체온 (ID: 627d3ef7-f796-448a-9056-f7c73876ed0a)
+     - 체크 (ID: 2ae03a01-51d6-4aae-bd17-515c9ce999d1)
+     - 체험 (ID: b7bf76fb-2920-4167-be2f-5eb135fae20e)
+     ... 외 2219개
+
+## 기초/일상용품
+   단어 수 (Word count): 1668
+   대표 단어 (Representative words): 배낭, 동화책, 물약, 밤색, 은행나무
+   단어 목록 (Sample words):
+     - 체면 (ID: 8dcad7ca-ef59-4357-92e2-6de9c9b031ce)
+     - 체온계 (ID: ed44f468-f18b-4ea4-8348-63d9b88ba628)
+     - 체온기 (ID: 19d93599-f218-48ca-b1f2-6ed4198cfe9c)
+     - 체육복 (ID: a637b7e8-7a78-46bb-948f-eac3ac9f1c26)
+     - 체조 (ID: d43790ca-b0f8-4271-b455-10e2b2413e2a)
+     ... 외 1663개
+
+## 성장
+   단어 수 (Word count): 921
+   대표 단어 (Representative words): 국수, 연필, 신랑, 동생, 음료
+   단어 목록 (Sample words):
+     - 체중 (ID: 1d20ad18-41ed-4597-89bd-161206c4b269)
+     - 체크인 (ID: e11bbd63-5ba3-48bc-b4ee-9c384c696fff)
+     - 초기 (ID: 7b0fa9f2-9ea4-4e86-b4b6-e4c67da0671b)
+     - 초등 (ID: 7be6acf8-9398-41c3-9368-fd83686e031c)
+     - 초등학생 (ID: 0e1f0dda-cc92-4b87-8397-08327bd6f3e9)
+     ... 외 916개
+
+## 일상어
+   단어 수 (Word count): 31
+   대표 단어 (Representative words): 부모님, 사장님, 반달, 매시간, 반년
+   단어 목록 (Sample words):
+     - 출연진 (ID: 0621d051-e2e2-4aab-bbbc-45c7827123c1)
+     - 통계 (ID: bcd6fb99-9069-43bc-9cbb-6c7cceab3b67)
+     - 화면 (ID: 93e8f806-fcb1-4f37-bcce-54cad32181cf)
+     - 황금연휴 (ID: 2366c2b5-c81d-46b5-9c20-b1d5d8868af5)
+     - 국적 (ID: d2f3b30a-4aae-4127-8ff7-2aad77b78599)
+     ... 외 26개
+
