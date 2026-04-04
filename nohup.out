@@ -1,0 +1,5 @@
+Usage: kozzle-word-grouper compress [OPTIONS]
+Try 'kozzle-word-grouper compress --help' for help.
+
+Error: Got unexpected extra argument ( )
+2026-04-03 11:02:54 - kozzle_word_grouper.connection_pool - INFO - Supabase client connection pool cleaned up
