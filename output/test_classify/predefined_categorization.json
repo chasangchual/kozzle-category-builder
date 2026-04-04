@@ -1,0 +1,102 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "total_words": 2,
+    "words_with_categories": 2,
+    "words_without_categories": 0,
+    "categories_file": "kor_words_catetoris.json",
+    "total_categories": {
+      "concept_categories": 50,
+      "function_categories": 50,
+      "usage_context_categories": 50
+    },
+    "total_classifications": {
+      "concept_categories": 6,
+      "function_categories": 1,
+      "usage_context_categories": 6
+    },
+    "avg_categories_per_word": {
+      "concept_categories": 3.0,
+      "function_categories": 0.5,
+      "usage_context_categories": 3.0
+    },
+    "processed_at": "2026-04-03T22:53:26.786288Z",
+    "model": "exaone3.5:7.8b",
+    "classification_method": "binary_yes_no"
+  },
+  "categorizations": [
+    {
+      "public_id": "b626731d-d493-426c-86ce-362af5e32238",
+      "lemma": "체계",
+      "definition": "일정한 원리에 따라 낱낱의 부분이 잘 짜여져 통일된 전체.",
+      "concept_categories": [
+        {
+          "id": 7,
+          "name": "사회"
+        },
+        {
+          "id": 15,
+          "name": "학문"
+        }
+      ],
+      "function_categories": [],
+      "usage_context_categories": [
+        {
+          "id": 28,
+          "name": "학술연구"
+        }
+      ]
+    },
+    {
+      "public_id": "7d418c1a-e1c8-43e9-bce9-c22fa9743d9e",
+      "lemma": "체력",
+      "definition": "육체적 활동을 할 수 있는 몸의 힘이나 기운.",
+      "concept_categories": [
+        {
+          "id": 2,
+          "name": "생물"
+        },
+        {
+          "id": 3,
+          "name": "인체"
+        },
+        {
+          "id": 42,
+          "name": "건강·의학"
+        },
+        {
+          "id": 48,
+          "name": "스포츠·운동"
+        }
+      ],
+      "function_categories": [
+        {
+          "id": 31,
+          "name": "판별/식별"
+        }
+      ],
+      "usage_context_categories": [
+        {
+          "id": 6,
+          "name": "의료·진료"
+        },
+        {
+          "id": 15,
+          "name": "노인돌봄"
+        },
+        {
+          "id": 34,
+          "name": "운동·훈련"
+        },
+        {
+          "id": 35,
+          "name": "경기·시합"
+        },
+        {
+          "id": 36,
+          "name": "야외활동"
+        }
+      ]
+    }
+  ]
+}

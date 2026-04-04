@@ -17,9 +17,11 @@ from kozzle_word_grouper.export import (
     WordGroupExporter,
     export_categorization_results,
     export_compressed_categories,
+    export_predefined_categorization,
 )
 from kozzle_word_grouper.labeler import ClusterLabeler
 from kozzle_word_grouper.models import KoreanWord
+from kozzle_word_grouper.predefined_categorizer import PredefinedCategorizer
 from kozzle_word_grouper.supabase_client import SupabaseClient
 from kozzle_word_grouper.utils import ensure_directory, get_logger
 
@@ -635,3 +637,115 @@ class WordGrouperPipeline:
         except Exception as e:
             logger.error(f"Category compression failed: {e}")
             raise WordGrouperError(f"Category compression failed: {e}") from e
+
+    def run_predefined_categorization(
+        self,
+        categories_file: Path | str,
+        table_name: str = "kor_word",
+        level_column: str = "level",
+        filter_level: list[int] | None = None,
+        min_lemma_length: int | None = None,
+        output_dir: Path | str | None = None,
+        show_progress: bool = True,
+        resume: bool = True,
+        subset: int | None = None,
+    ) -> dict[str, Any]:
+        """Run pre-defined category classification pipeline.
+
+        Args:
+            categories_file: Path to kor_words_categories.json.
+            table_name: Name of the Supabase table.
+            level_column: Name of the level column for filtering.
+            filter_level: List of levels to include (e.g., [1, 2]).
+            min_lemma_length: Minimum lemma length.
+            output_dir: Output directory.
+            show_progress: Whether to show progress.
+            resume: Whether to resume from cache.
+            subset: Number of words to process (for testing).
+
+        Returns:
+            Dictionary with categorization results.
+
+        Raises:
+            WordGrouperError: If pipeline fails.
+        """
+        try:
+            if output_dir is None:
+                output_dir = Path("output")
+            else:
+                output_dir = Path(output_dir)
+
+            ensure_directory(output_dir)
+
+            if self.supabase_client is None:
+                self.supabase_client = SupabaseClient()
+
+            logger.info(f"Fetching Korean words from table '{table_name}'")
+            if filter_level:
+                logger.info(f"Filtering by levels: {filter_level}")
+            if min_lemma_length is not None:
+                logger.info(f"Filtering by lemma length >= {min_lemma_length}")
+
+            words = self.supabase_client.fetch_korean_words(
+                table_name=table_name,
+                level_column=level_column,
+                filter_level=filter_level,
+                min_lemma_length=min_lemma_length,
+            )
+
+            if not words:
+                raise WordGrouperError("No words found in table")
+
+            if subset is not None and subset < len(words):
+                words = words[:subset]
+                logger.info(f"Processing subset of {subset} words")
+
+            logger.info(f"Total words: {len(words)}")
+
+            categorizer = PredefinedCategorizer(
+                categories_file=categories_file,
+                model_name=self.model_name,
+                ollama_host=self.ollama_host,
+                max_workers=4,
+                max_retries=3,
+                retry_delay=2.0,
+                cache_file=output_dir / "predefined_categorization_cache.json",
+            )
+
+            logger.info(f"Classifying words using {self.model_name} via Ollama")
+
+            results = categorizer.categorize_words(
+                words=words,
+                show_progress=show_progress,
+                resume=resume,
+            )
+
+            logger.info(f"Exporting results to {output_dir}")
+            output_path = export_predefined_categorization(
+                results=results,
+                categories_file=categories_file,
+                output_dir=output_dir,
+                model_version=self.model_name,
+            )
+
+            logger.info(f"Predefined categorization results exported to {output_path}")
+            logger.info("Predefined categorization pipeline completed successfully")
+
+            # Read the exported file to get metadata
+            with open(output_path, "r", encoding="utf-8") as f:
+                exported_data = json.load(f)
+
+            return {
+                "results": results,
+                "total_words": len(results),
+                "output_path": output_path,
+                "metadata": exported_data.get("metadata", {}),
+            }
+
+        except Exception as e:
+            logger.error(f"Predefined categorization failed: {e}")
+            raise WordGrouperError(f"Predefined categorization failed: {e}") from e
+
+        finally:
+            close_connection_pool()
+            logger.info("Connection pool closed")

@@ -474,3 +474,102 @@ def export_compressed_categories(
 
     except Exception as e:
         raise ExportError(f"Failed to export compressed categories: {e}") from e
+
+
+def export_predefined_categorization(
+    results: list[dict],
+    categories_file: Path | str,
+    output_dir: Path | str,
+    model_version: str = "exaone3.5:7.8b",
+) -> Path:
+    """Export predefined categorization results to JSON file.
+
+    Args:
+        results: List of categorization results from PredefinedCategorizer.
+        categories_file: Path to the categories JSON file.
+        output_dir: Output directory.
+        model_version: Model version string.
+
+    Returns:
+        Path to exported JSON file.
+
+    Raises:
+        ExportError: If export fails.
+    """
+    output_dir = Path(output_dir)
+    ensure_directory(output_dir)
+
+    output_path = output_dir / "predefined_categorization.json"
+
+    try:
+        categories_file = Path(categories_file)
+        with open(categories_file, "r", encoding="utf-8") as f:
+            categories_data = json.load(f)
+
+        total_categories = {
+            "concept_categories": len(categories_data.get("concept_categories", [])),
+            "function_categories": len(categories_data.get("function_categories", [])),
+            "usage_context_categories": len(
+                categories_data.get("usage_context_categories", [])
+            ),
+        }
+
+        concept_total = sum(len(r["concept_categories"]) for r in results)
+        function_total = sum(len(r["function_categories"]) for r in results)
+        usage_context_total = sum(len(r["usage_context_categories"]) for r in results)
+
+        words_with_categories = sum(
+            1
+            for r in results
+            if r["concept_categories"]
+            or r["function_categories"]
+            or r["usage_context_categories"]
+        )
+
+        output_data = {
+            "version": "1.0",
+            "metadata": {
+                "total_words": len(results),
+                "words_with_categories": words_with_categories,
+                "words_without_categories": len(results) - words_with_categories,
+                "categories_file": str(categories_file),
+                "total_categories": total_categories,
+                "total_classifications": {
+                    "concept_categories": concept_total,
+                    "function_categories": function_total,
+                    "usage_context_categories": usage_context_total,
+                },
+                "avg_categories_per_word": {
+                    "concept_categories": round(concept_total / len(results), 2)
+                    if results
+                    else 0,
+                    "function_categories": round(function_total / len(results), 2)
+                    if results
+                    else 0,
+                    "usage_context_categories": round(
+                        usage_context_total / len(results), 2
+                    )
+                    if results
+                    else 0,
+                },
+                "processed_at": datetime.now().isoformat() + "Z",
+                "model": model_version,
+                "classification_method": "binary_yes_no",
+            },
+            "categorizations": results,
+        }
+
+        output_data = convert_to_native_types(output_data)
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Exported predefined categorization to {output_path}")
+        logger.info(
+            f"Total classifications: "
+            f"concept={concept_total}, function={function_total}, usage_context={usage_context_total}"
+        )
+        return output_path
+
+    except Exception as e:
+        raise ExportError(f"Failed to export predefined categorization: {e}") from e

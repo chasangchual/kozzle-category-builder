@@ -345,6 +345,123 @@ uv run kozzle-word-grouper compress \
 - Cycle 2+: Faster (fewer categories to process)
 - Total time: Sum of all cycle times
 
+### Predefined Category Classification
+
+Classify Korean words into **pre-defined categories** using binary Yes/No classification:
+
+**Input:** `kor_words_categories.json` (150 pre-defined categories)
+- 50 concept categories (개념분류)
+- 50 function categories (기능분류)
+- 50 usage context categories (사용맥락분류)
+
+**Process:**
+- For each word, check all 150 categories using LLM
+- Binary Yes/No classification for each category
+- ~900,000 LLM calls for 6,000 words
+- Estimated time: ~15-20 hours (with 4 concurrent workers)
+
+**Example usage:**
+```bash
+# Basic usage
+uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --output-dir output/predefined
+
+# With filtering and subset (for testing)
+uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --filter-level 1 --filter-level 2 \
+  --subset 100 \
+  --output-dir output/test_classify
+
+# Resume from cache if interrupted
+uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --resume \
+  --output-dir output/predefined
+```
+
+**Input file format (kor_words_categories.json):**
+```json
+{
+  "metadata": {...},
+  "concept_categories": [
+    {"id": 1, "name": "자연물", "description": "자연 상태에서 존재하는 사물·현상"},
+    {"id": 2, "name": "생물", "description": "사람·동물·식물·미생물 등 살아 있는 존재"},
+    ...
+  ],
+  "function_categories": [
+    {"id": 1, "name": "이동/운반", "description": "사람이나 사물을 옮기거나 이동시키는 기능"},
+    ...
+  ],
+  "usage_context_categories": [
+    {"id": 1, "name": "가정생활", "description": "집 안에서의 생활과 관련된 맥락"},
+    ...
+  ]
+}
+```
+
+**Output file (predefined_categorization.json):**
+```json
+{
+  "version": "1.0",
+  "metadata": {
+    "total_words": 5874,
+    "words_with_categories": 5800,
+    "words_without_categories": 74,
+    "categories_file": "kor_words_categories.json",
+    "total_categories": {
+      "concept_categories": 50,
+      "function_categories": 50,
+      "usage_context_categories": 50
+    },
+    "total_classifications": {
+      "concept_categories": 18000,
+      "function_categories": 8000,
+      "usage_context_categories": 15000
+    },
+    "avg_categories_per_word": {
+      "concept_categories": 3.1,
+      "function_categories": 1.4,
+      "usage_context_categories": 2.6
+    },
+    "processed_at": "2026-04-03T22:00:00Z",
+    "model": "exaone3.5:7.8b",
+    "classification_method": "binary_yes_no"
+  },
+  "categorizations": [
+    {
+      "public_id": "...",
+      "lemma": "개",
+      "definition": "사람이 집에서 기르는 동물",
+      "concept_categories": [
+        {"id": 2, "name": "생물"},
+        {"id": 3, "name": "인체"}
+      ],
+      "function_categories": [
+        {"id": 34, "name": "보조/지원"}
+      ],
+      "usage_context_categories": [
+        {"id": 1, "name": "가정생활"},
+        {"id": 16, "name": "반려동물 관리"}
+      ]
+    }
+  ]
+}
+```
+
+**Performance:**
+- **Total LLM calls**: ~900,000 (6,000 words × 150 categories)
+- **Concurrent workers**: 4 (configurable)
+- **Time per word**: ~1.5 seconds (150 calls × 40ms / 4 workers)
+- **Total time**: ~15-20 hours for full dataset
+- **Resume capability**: Saves progress every 10 words
+
+**Performance optimization:**
+- Increase workers: `--max-workers 8` (faster, but uses more resources)
+- Use subset for testing: `--subset 100`
+- Resume from cache if interrupted: `--resume`
+
 ### Embedding Clustering Output
 
 **`word_groups.json`** - Clusters with Korean labels
@@ -598,12 +715,13 @@ kozzle-word-grouper/
 ├── src/kozzle_word_grouper/
 │   ├── __init__.py              # Package init
 │   ├── __main__.py              # Entry point
-│   ├── cli.py                   # CLI commands (categorize, group, compress)
+│   ├── cli.py                   # CLI commands (categorize, group, compress, classify)
 │   ├── core.py                  # Main pipeline orchestrator
 │   ├── supabase_client.py       # Supabase integration + connection pool
 │   ├── categorizer.py           # LLM categorization logic
 │   ├── category_aggregator.py   # Category aggregation and stats
 │   ├── category_compressor.py   # Category compression and merging
+│   ├── predefined_categorizer.py # Pre-defined category classification
 │   ├── embeddings.py            # Ollama embedding generation
 │   ├── clustering.py            # HDBSCAN clustering
 │   ├── labeler.py                # Korean cluster label generation
@@ -616,6 +734,7 @@ kozzle-word-grouper/
 ├── tests/
 │   ├── conftest.py              # Pytest fixtures
 │   └── test_*.py                # Test modules
+├── kor_words_categories.json   # Pre-defined categories (input)
 ├── database_schema.sql          # Database schema for Supabase
 ├── pyproject.toml               # Dependencies and config
 ├── .env.example                 # Environment variables template
@@ -722,6 +841,57 @@ nohup uv run kozzle-word-grouper compress \
   --input-file output/word_categorization.json \
   --output-dir output/compressed \
   > compression.log 2>&1 &
+```
+
+**`classify` command:**
+
+```bash
+uv run kozzle-word-grouper classify [OPTIONS]
+
+Options:
+  -c, --categories-file PATH      Path to kor_words_categories.json  [required]
+  -t, --table TEXT                Name of the table containing Korean words
+  --level-column TEXT             Name of the level column for filtering
+  -f, --filter-level INTEGER      Filter by level (e.g., -f 1 -f 2)
+  -m, --min-lemma-length INTEGER  Minimum lemma length (e.g., 2 for >= 2 characters)
+  -o, --output-dir TEXT           Directory to save output files
+  --ollama-host TEXT              Ollama server URL
+  --model TEXT                    Ollama model for binary classification
+  --subset INTEGER                Number of words to process (for testing)
+  --resume                        Resume from cache if available
+```
+
+**Examples:**
+
+```bash
+# Basic usage (all words, all 150 categories)
+uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --output-dir output/predefined
+
+# With filtering (level 1 and 2 only)
+uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --filter-level 1 --filter-level 2 \
+  --output-dir output/predefined
+
+# Testing with subset
+uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --subset 100 \
+  --output-dir output/test_classify
+
+# Resume from cache if interrupted
+uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --resume \
+  --output-dir output/predefined
+
+# Run overnight for large datasets (~15-20 hours)
+nohup uv run kozzle-word-grouper classify \
+  --categories-file kor_words_categories.json \
+  --output-dir output/predefined \
+  > classify.log 2>&1 &
 ```
 
 ## Testing

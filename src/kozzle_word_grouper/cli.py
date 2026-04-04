@@ -591,6 +591,171 @@ def info() -> None:
 
 
 @main.command()
+@click.option(
+    "--categories-file",
+    "-c",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to kor_words_categories.json",
+)
+@click.option(
+    "--table",
+    "-t",
+    default="kor_word",
+    help="Name of the table containing Korean words",
+)
+@click.option(
+    "--level-column",
+    default="level",
+    help="Name of the level column for filtering",
+)
+@click.option(
+    "--filter-level",
+    "-f",
+    multiple=True,
+    type=int,
+    help="Filter by level (e.g., -f 1 -f 2)",
+)
+@click.option(
+    "--min-lemma-length",
+    "-m",
+    type=int,
+    help="Minimum lemma length (e.g., 2 for >= 2 characters)",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    default="./output",
+    help="Directory to save output files",
+)
+@click.option(
+    "--ollama-host",
+    default=None,
+    help="Ollama server URL (default: from env or localhost:11434)",
+)
+@click.option(
+    "--model",
+    default="exaone3.5:7.8b",
+    help="Ollama model for binary classification",
+)
+@click.option(
+    "--subset",
+    type=int,
+    help="Number of words to process (for testing, None for all)",
+)
+@click.option(
+    "--resume",
+    is_flag=True,
+    default=True,
+    help="Resume from cache if available",
+)
+def classify(
+    categories_file: str,
+    table: str,
+    level_column: str,
+    filter_level: tuple[int, ...],
+    min_lemma_length: int | None,
+    output_dir: str,
+    ollama_host: str | None,
+    model: str,
+    subset: int | None,
+    resume: bool,
+) -> None:
+    """Classify Korean words into pre-defined categories using LLM binary classification.
+
+    This command will:
+    1. Load pre-defined categories from JSON file (150 categories)
+    2. Fetch Korean words from Supabase (kor_word table)
+    3. For each word, check all 150 categories using LLM Yes/No classification
+    4. Export results with category IDs and names
+
+    Expected runtime: ~15-20 hours for 6000 words (900,000 LLM calls)
+    """
+    logger = logging.getLogger(__name__)
+
+    try:
+        click.echo("Initializing predefined categorizer...")
+        pipeline = WordGrouperPipeline(
+            model_name=model,
+            output_dir=Path(output_dir),
+            ollama_host=ollama_host,
+        )
+
+        click.echo(f"Loading categories from: {categories_file}")
+        click.echo(f"Using Ollama model: {model}")
+        click.echo(f"Resume from cache: {'Yes' if resume else 'No'}")
+
+        level_filter = list(filter_level) if filter_level else None
+
+        if level_filter:
+            click.echo(f"Filtering by levels: {level_filter}")
+        if min_lemma_length is not None:
+            click.echo(f"Filtering by lemma length >= {min_lemma_length}")
+        if subset is not None:
+            click.echo(f"Processing subset of {subset} words")
+
+        result = pipeline.run_predefined_categorization(
+            categories_file=categories_file,
+            table_name=table,
+            level_column=level_column,
+            filter_level=level_filter,
+            min_lemma_length=min_lemma_length,
+            output_dir=output_dir,
+            show_progress=True,
+            resume=resume,
+            subset=subset,
+        )
+
+        click.echo("\n" + "=" * 60)
+        click.echo(" predefined categorization complete)")
+        click.echo("=" * 60 + "\n")
+
+        metadata = result.get("metadata", {})
+        click.echo("Classification Statistics:\n")
+        click.echo(f"  Total words: {metadata.get('total_words', 0)}")
+        click.echo(
+            f"  Words with categories: {metadata.get('words_with_categories', 0)}"
+        )
+        click.echo(
+            f"  Words without categories: {metadata.get('words_without_categories', 0)}"
+        )
+        click.echo()
+
+        total_classifications = metadata.get("total_classifications", {})
+        click.echo("Total Classifications:")
+        click.echo(
+            f"  Concept categories: {total_classifications.get('concept_categories', 0)}"
+        )
+        click.echo(
+            f"  Function categories: {total_classifications.get('function_categories', 0)}"
+        )
+        click.echo(
+            f"  Usage context categories: {total_classifications.get('usage_context_categories', 0)}"
+        )
+        click.echo()
+
+        avg_categories = metadata.get("avg_categories_per_word", {})
+        click.echo("Average Categories per Word:")
+        click.echo(f"  Concept: {avg_categories.get('concept_categories', 0):.2f}")
+        click.echo(f"  Function: {avg_categories.get('function_categories', 0):.2f}")
+        click.echo(
+            f"  Usage context: {avg_categories.get('usage_context_categories', 0):.2f}"
+        )
+        click.echo()
+
+        click.echo("✓ Done! Output file: " + str(result.get("output_path", "")))
+
+    except WordGrouperError as e:
+        click.echo(f"Error: {e}", err=True)
+        logger.exception("Word grouper error")
+        raise SystemExit(1)
+    except Exception as e:
+        click.echo(f"Unexpected error: {e}", err=True)
+        logger.exception("Unexpected error")
+        raise SystemExit(1)
+
+
+@main.command()
 def pool_info() -> None:
     """Display connection pool configuration and statistics."""
     from kozzle_word_grouper.monitoring import log_connection_pool_stats
