@@ -188,11 +188,11 @@ uv run kozzle-word-grouper compress \
   --min-word-count 80 \
   --no-llm-merge
 
-# Full compression with LLM + filtering
+# Multi-cycle compression for iterative refinement
 uv run kozzle-word-grouper compress \
   --input-file output/word_categorization.json \
-  --output-dir output/compressed_filtered \
-  --min-word-count 50
+  --output-dir output/compressed \
+  --cycles 3
 ```
 
 **Compression steps:**
@@ -201,6 +201,7 @@ uv run kozzle-word-grouper compress \
 3. **LLM semantic grouping** (optional): Use LLM to group similar categories
 4. **Sort by word count**: Order categories by number of words (descending)
 5. **Filter by word count** (optional): Keep only categories with minimum words
+6. **Iterate** (if cycles > 1): Re-aggregate and re-compress for progressive refinement
 
 **`compressed_categories.json`** - Compressed output:
 
@@ -288,9 +289,61 @@ After Filtering (>=80 words):
 ```
 
 **Recommended min_word_count Values:**
-- **50**: Keep more categories (~10-20 per type)
-- **80**: Keep only largest categories (~3-6 per type)
-- **100**: Keep only very common categories (~1-3 per type)
+- **min_word_count=50**: Keep more categories (~10-20 per type)
+- **min_word_count=80**: Keep only largest categories (~3-6 per type)
+- **min_word_count=100**: Keep only very common categories (~1-3 per type)
+
+### Multi-Cycle Compression
+
+Run compression iteratively for progressive refinement:
+
+**Why multiple cycles?**
+- Each cycle re-aggregates categories from previous cycle
+- Allows for iterative convergence and cleaner categories
+- Usefulwhen categories need multiple passes to settle
+
+**How it works:**
+```
+Cycle 1: 306 categories → 304 categories (normalization)
+  └─ Re-aggregate from compressed categorizations
+Cycle 2: 304 categories → 99 categories (major reduction from re-aggregation)
+  └─ Re-aggregate from cycle 2's categorizations
+Cycle 3: 99 categories → 99 categories (stable, no further reduction)
+```
+
+**Example usage:**
+```bash
+# 2 cycles without LLM (fast)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed \
+  --cycles 2 \
+  --no-llm-merge
+
+# 3 cycles with LLM (most refined results)
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed \
+  --cycles 3
+
+# Combine with filtering
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --output-dir output/compressed \
+  --cycles 2 \
+  --min-word-count 80 \
+  --no-llm-merge
+```
+
+**Output:**
+- File saved as: `compressed_categories_cycle_N.json` (where N is the cycle count)
+- Metadata includes: `cycle_number`, `total_cycles`, `cycle_stats`
+- Each cycle's statistics tracked in `cycle_stats` array
+
+**Performance:**
+- Cycle 1: Full processing time
+- Cycle 2+: Faster (fewer categories to process)
+- Total time: Sum of all cycle times
 
 ### Embedding Clustering Output
 
@@ -387,6 +440,17 @@ def import_categorizations(supabase: Client, json_file: str):
 - **With LLM Merging**: ~10-15 minutes (depends on batch size and categories)
 - **Compression Ratio**: 5-6% (normalization), additional 10-30% (LLM merging)
 - **With Filtering** (--min-word-count=80): ~1 minute, 99%+ reduction for small categories
+- **Multi-Cycle** (--cycles 3): ~3-5 minutes normalizing only, ~1-3 hours with LLM
+
+#### Multi-Cycle Performance
+
+Each cycle gets progressively faster as categories are reduced:
+
+```
+Cycle 1: 11,106 categories (full compression)
+Cycle 2: ~100 categories (only if LLM merged heavily in cycle 1)
+Cycle 3: ~50-100 categories (stable, minimal further reduction)
+```
 
 ## Typical Workflow
 
@@ -624,6 +688,7 @@ Options:
   --ollama-host TEXT            Ollama server URL
   --batch-size INTEGER          Number of categories per LLM call  [default: 50]
   -m, --min-word-count INTEGER  Minimum words to keep a category (default: no filter)
+  -c, --cycles INTEGER          Number of compression cycles  [default: 1]
   --no-llm-merge               Disable LLM-based semantic merging
 ```
 
@@ -639,6 +704,12 @@ uv run kozzle-word-grouper compress \
 uv run kozzle-word-grouper compress \
   --input-file output/word_categorization.json \
   --min-word-count 80 \
+  --no-llm-merge
+
+# Multi-cycle compression for iterative refinement
+uv run kozzle-word-grouper compress \
+  --input-file output/word_categorization.json \
+  --cycles 3 \
   --no-llm-merge
 
 # Full compression with LLM + filtering

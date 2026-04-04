@@ -432,6 +432,13 @@ def categorize(
     help="Minimum number of words to keep a category (default: no filter)",
 )
 @click.option(
+    "--cycles",
+    "-c",
+    default=1,
+    type=int,
+    help="Number of compression cycles (default: 1)",
+)
+@click.option(
     "--no-llm-merge",
     is_flag=True,
     help="Disable LLM-based semantic merging (only normalize and merge exact duplicates)",
@@ -443,23 +450,30 @@ def compress(
     ollama_host: str | None,
     batch_size: int,
     min_word_count: int | None,
+    cycles: int,
     no_llm_merge: bool,
 ) -> None:
     """Compress categories by normalizing, merging, and semantic grouping.
 
     This command will:
     1. Load categorizations from word_categorization.json
-    2. Remove spaces from category names (normalization)
-    3. Merge exact duplicate categories
-    4. Use LLM to group similar categories (optional)
-    5. Sort categories by word count (descending)
-    6. Filter categories by minimum word count (optional)
-    7. Export compressed results
+    2. For each cycle (1 to N):
+       a. Aggregate categories from previous cycle (or original for cycle 1)
+       b. Normalize category names (remove spaces)
+       c. Merge exact duplicate categories
+       d. Use LLM to group similar categories (optional)
+       e. Sort categories by word count (descending)
+       f. Filter categories by minimum word count (optional)
+       g. Update categorizations for next cycle
+    3. Export ONLY final cycle results as compressed_categories_cycle_N.json
 
     Use --no-llm-merge to skip LLM-based semantic merging and only perform
     normalization and exact duplicate merging.
 
     Use --min-word-count to filter out categories with fewer words than specified.
+
+    Use --cycles to run multiple compression iterations. Each cycle re-aggregates
+    categories from the previous cycle, allowing for progressive refinement.
     """
     logger = logging.getLogger(__name__)
 
@@ -475,6 +489,9 @@ def compress(
         click.echo(f"Using Ollama model: {model}")
         click.echo(f"Batch size: {batch_size}")
         click.echo(f"LLM-based merging: {'Disabled' if no_llm_merge else 'Enabled'}")
+        click.echo(f"Number of cycles: {cycles}")
+        if cycles > 1:
+            click.echo(f"Running {cycles} compression cycles iteratively")
         if min_word_count is not None:
             click.echo(f"Minimum word count filter: {min_word_count} words")
 
@@ -484,10 +501,16 @@ def compress(
             min_word_count=min_word_count,
             output_dir=output_dir,
             show_progress=True,
+            cycles=cycles,
         )
 
         click.echo("\n" + "=" * 60)
-        click.echo("카테고리 압축 완료 (Category Compression Complete)")
+        if cycles > 1:
+            click.echo(
+                f"압축 완료 - {cycles} 사이클 (Compression Complete - {cycles} Cycles)"
+            )
+        else:
+            click.echo("카테고리 압축 완료 (Category Compression Complete)")
         click.echo("=" * 60 + "\n")
 
         original_stats = result.get("original_stats", {})
@@ -515,6 +538,18 @@ def compress(
                 click.echo(f"  {class_type}:")
                 for item in top_10[:5]:
                     click.echo(f"    - {item['category']}: {item['count']} words")
+                click.echo()
+
+        if cycles > 1 and "cycle_info" in result:
+            click.echo("Category Reduction by Cycle:\n")
+            for cycle_stat in result["cycle_info"].get("cycle_stats", []):
+                cycle_num = cycle_stat["cycle_number"]
+                click.echo(f"  Cycle {cycle_num}:")
+                for class_type in ["하위개념", "기능", "사용맥락"]:
+                    stats = cycle_stat.get("statistics", {}).get(class_type, {})
+                    click.echo(
+                        f"    {class_type}: {stats.get('total_categories', 0)} categories"
+                    )
                 click.echo()
 
         click.echo("✓ Done! Output file: " + str(result["output_path"]))

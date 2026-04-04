@@ -372,6 +372,7 @@ def export_compressed_categories(
     output_dir: Path | str,
     model_version: str = "exaone3.5:7.8b",
     use_llm_merge: bool = True,
+    cycle_number: int | None = None,
 ) -> Path:
     """Export compressed categories to JSON file.
 
@@ -380,6 +381,7 @@ def export_compressed_categories(
         output_dir: Output directory.
         model_version: Model version string.
         use_llm_merge: Whether LLM merging was used.
+        cycle_number: Cycle number if running multi-cycle compression.
 
     Returns:
         Path to exported JSON file.
@@ -390,7 +392,12 @@ def export_compressed_categories(
     output_dir = Path(output_dir)
     ensure_directory(output_dir)
 
-    output_path = output_dir / "compressed_categories.json"
+    if cycle_number:
+        filename = f"compressed_categories_cycle_{cycle_number}.json"
+    else:
+        filename = "compressed_categories.json"
+
+    output_path = output_dir / filename
 
     try:
         compression_ratio = {}
@@ -421,26 +428,36 @@ def export_compressed_categories(
                         }
                     )
 
+        metadata = {
+            "compression_timestamp": datetime.now().isoformat() + "Z",
+            "model": model_version,
+            "use_llm_merge": use_llm_merge,
+            "original_categories": {
+                class_type: original_stats.get(class_type, {}).get(
+                    "total_categories", 0
+                )
+                for class_type in ["하위개념", "기능", "사용맥락"]
+            },
+            "compressed_categories": {
+                class_type: compressed_stats.get(class_type, {}).get(
+                    "total_categories", 0
+                )
+                for class_type in ["하위개념", "기능", "사용맥락"]
+            },
+            "compression_ratio": compression_ratio,
+        }
+
+        if cycle_number:
+            metadata["cycle_number"] = cycle_number
+            cycle_info = result.get("cycle_info", {})
+            if cycle_info:
+                metadata["total_cycles"] = cycle_info.get("total_cycles", cycle_number)
+                if "cycle_stats" in cycle_info:
+                    metadata["cycle_stats"] = cycle_info["cycle_stats"]
+
         output_data = {
             "version": "2.0",
-            "metadata": {
-                "compression_timestamp": datetime.now().isoformat() + "Z",
-                "model": model_version,
-                "use_llm_merge": use_llm_merge,
-                "original_categories": {
-                    class_type: original_stats.get(class_type, {}).get(
-                        "total_categories", 0
-                    )
-                    for class_type in ["하위개념", "기능", "사용맥락"]
-                },
-                "compressed_categories": {
-                    class_type: compressed_stats.get(class_type, {}).get(
-                        "total_categories", 0
-                    )
-                    for class_type in ["하위개념", "기능", "사용맥락"]
-                },
-                "compression_ratio": compression_ratio,
-            },
+            "metadata": metadata,
             "compressed_categories": compressed_categories,
             "merge_log": result.get("merge_log", {}),
             "statistics": compressed_stats,

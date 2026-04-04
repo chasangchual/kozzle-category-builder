@@ -492,8 +492,9 @@ class WordGrouperPipeline:
         min_word_count: int | None = None,
         output_dir: Path | str | None = None,
         show_progress: bool = True,
+        cycles: int = 1,
     ) -> dict[str, Any]:
-        """Run category compression pipeline.
+        """Run category compression pipeline with multiple cycles.
 
         Args:
             categorization_file: Path to word_categorization.json.
@@ -501,9 +502,10 @@ class WordGrouperPipeline:
             min_word_count: Minimum number of words to keep a category (None = no filter).
             output_dir: Output directory (default: same as input file).
             show_progress: Whether to show progress.
+            cycles: Number of compression cycles (default: 1).
 
         Returns:
-            Dictionary with compressed results.
+            Dictionary with compressed results from final cycle.
 
         Raises:
             WordGrouperError: If compression fails.
@@ -538,38 +540,94 @@ class WordGrouperPipeline:
                     "categories": item.get("categories", {}),
                 }
 
+            aggregator = CategoryAggregator()
+
+            cycle_stats = []
+
             category_index = data.get("category_index", {})
 
             if not category_index:
                 logger.info("Category index not found, rebuilding from categorizations")
-                aggregator = CategoryAggregator()
                 aggregated = aggregator.aggregate(categorizations)
                 category_index = aggregated["category_index"]
 
-            logger.info("Starting category compression...")
-            if use_llm_merge:
-                logger.info("Using LLM-based semantic merging")
-            if min_word_count is not None:
-                logger.info(f"Filtering categories with <{min_word_count} words")
+            original_stats = compressor._calculate_statistics(category_index)
 
-            result = compressor.compress_categories(
-                category_index=category_index,
-                categorizations=categorizations,
-                use_llm_merge=use_llm_merge,
-                min_word_count=min_word_count,
-                show_progress=show_progress,
+            for cycle_num in range(1, cycles + 1):
+                logger.info(f"=" * 60)
+                logger.info(f"Starting compression cycle {cycle_num}/{cycles}")
+                logger.info(f"=" * 60)
+
+                if cycle_num > 1:
+                    logger.info(f"Re-aggregating categories from cycle {cycle_num - 1}")
+                    aggregated = aggregator.aggregate(categorizations)
+                    category_index = aggregated["category_index"]
+
+                logger.info(f"Compressing categories for cycle {cycle_num}")
+                if use_llm_merge:
+                    logger.info("Using LLM-based semantic merging")
+                if min_word_count is not None:
+                    logger.info(f"Filtering categories with <{min_word_count} words")
+
+                result = compressor.compress_categories(
+                    category_index=category_index,
+                    categorizations=categorizations,
+                    use_llm_merge=use_llm_merge,
+                    min_word_count=min_word_count,
+                    show_progress=show_progress,
+                )
+
+                categorizations = {}
+                for item in result.get("categorizations", []):
+                    public_id = item.get("public_id")
+                    categorizations[public_id] = {
+                        "lemma": item.get("lemma", ""),
+                        "definition": item.get("definition"),
+                        "categories": item.get("categories", {}),
+                    }
+
+                cycle_stat = {
+                    "cycle_number": cycle_num,
+                    "statistics": result.get("statistics", {}),
+                    "use_llm_merge": use_llm_merge,
+                    "min_word_count": min_word_count,
+                }
+                cycle_stats.append(cycle_stat)
+
+                stats = result.get("statistics", {})
+                logger.info(f"Cycle {cycle_num} complete:")
+                for class_type in ["하위개념", "기능", "사용맥락"]:
+                    type_stats = stats.get(class_type, {})
+                    logger.info(
+                        f"  {class_type}: {type_stats.get('total_categories', 0)} categories, "
+                        f"{type_stats.get('total_words', 0)} words"
+                    )
+
+                if cycle_num < cycles:
+                    logger.info(f"Preparing for cycle {cycle_num + 1}...")
+
+            final_cycle_num = cycles
+            result["cycle_info"] = {
+                "total_cycles": cycles,
+                "cycle_stats": cycle_stats,
+                "original_stats": original_stats,
+            }
+
+            logger.info(
+                f"Exporting final results (cycle {final_cycle_num}) to {output_dir}"
             )
-
-            logger.info(f"Exporting compressed results to {output_dir}")
             output_path = export_compressed_categories(
                 result=result,
                 output_dir=output_dir,
                 model_version=self.model_name,
                 use_llm_merge=use_llm_merge,
+                cycle_number=final_cycle_num,
             )
 
             logger.info(f"Compressed results exported to {output_path}")
-            logger.info("Category compression pipeline completed successfully")
+            logger.info(
+                f"Category compression pipeline completed successfully ({cycles} cycles)"
+            )
 
             result["output_path"] = output_path
             return result
