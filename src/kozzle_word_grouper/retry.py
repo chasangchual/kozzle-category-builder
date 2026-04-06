@@ -1,19 +1,19 @@
 """Retry logic for external API calls."""
 
-import os
 import functools
-from typing import Any, Callable
+import os
+from collections.abc import Callable
+from typing import Any
 
+import requests
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
 )
-import requests
 
-from kozzle_word_grouper.exceptions import DataRetrievalError
 from kozzle_word_grouper.utils import get_logger
 
 logger = get_logger(__name__)

@@ -2,8 +2,8 @@
 
 import os
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 import httpx
 
@@ -13,9 +13,10 @@ from kozzle_word_grouper.utils import get_logger
 logger = get_logger(__name__)
 
 # Pool configuration from environment
+# Increased timeouts to support long-running LLM operations
 MAX_CONNECTIONS = int(os.getenv("SUPABASE_MAX_CONNECTIONS", "10"))
 MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("SUPABASE_MAX_KEEPALIVE", "5"))
-IDLE_TIMEOUT = float(os.getenv("SUPABASE_IDLE_TIMEOUT", "0.1"))  # 100ms
+IDLE_TIMEOUT = float(os.getenv("SUPABASE_IDLE_TIMEOUT", "30.0"))  # 30 seconds (was 0.1)
 CONNECT_TIMEOUT = float(os.getenv("SUPABASE_CONNECT_TIMEOUT", "5.0"))
 READ_TIMEOUT = float(os.getenv("SUPABASE_READ_TIMEOUT", "30.0"))
 WRITE_TIMEOUT = float(os.getenv("SUPABASE_WRITE_TIMEOUT", "30.0"))

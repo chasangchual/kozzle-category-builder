@@ -173,7 +173,7 @@ class WordGrouperPipeline:
         try:
             logger.info(f"Loading Korean words from cache: {cache_file}")
 
-            with open(cache_file, "r", encoding="utf-8") as f:
+            with open(cache_file, encoding="utf-8") as f:
                 data = json.load(f)
 
             words = []
@@ -556,9 +556,9 @@ class WordGrouperPipeline:
             original_stats = compressor._calculate_statistics(category_index)
 
             for cycle_num in range(1, cycles + 1):
-                logger.info(f"=" * 60)
+                logger.info("=" * 60)
                 logger.info(f"Starting compression cycle {cycle_num}/{cycles}")
-                logger.info(f"=" * 60)
+                logger.info("=" * 60)
 
                 if cycle_num > 1:
                     logger.info(f"Re-aggregating categories from cycle {cycle_num - 1}")
@@ -732,7 +732,7 @@ class WordGrouperPipeline:
             logger.info("Predefined categorization pipeline completed successfully")
 
             # Read the exported file to get metadata
-            with open(output_path, "r", encoding="utf-8") as f:
+            with open(output_path, encoding="utf-8") as f:
                 exported_data = json.load(f)
 
             return {

@@ -2,16 +2,15 @@
 
 import os
 from typing import Any
-from unittest.mock import Mock
 
-from supabase import Client
 import requests
+from supabase import Client
 
 from kozzle_word_grouper.connection_pool import ConnectionPoolManager
 from kozzle_word_grouper.exceptions import DataRetrievalError, SupabaseConnectionError
+from kozzle_word_grouper.models import KoreanWord
 from kozzle_word_grouper.retry import supabase_retry
 from kozzle_word_grouper.utils import get_logger
-from kozzle_word_grouper.models import KoreanWord
 
 logger = get_logger(__name__)
 
@@ -194,9 +193,13 @@ class SupabaseClient:
                     f"{public_id_column}, {lemma_column}, {definition_column}"
                 )
 
-                # Apply level filter
+                # Apply level filter at database level
                 if filter_level:
                     query = query.in_(level_column, filter_level)
+
+                # Apply lemma length filter at database level (PostgreSQL)
+                if min_lemma_length is not None:
+                    query = query.gte(f"length({lemma_column})", min_lemma_length)
 
                 # Apply pagination
                 query = query.range(offset, offset + batch_size - 1)
@@ -211,29 +214,17 @@ class SupabaseClient:
 
                 # Process this batch
                 batch_count += 1
-                batch_words_count = 0
 
                 for row in result.data:
                     if isinstance(row, dict):
-                        lemma = row.get(lemma_column, "")
-
-                        # Apply lemma length filter
-                        if min_lemma_length is not None:
-                            if len(str(lemma)) < min_lemma_length:
-                                continue
-
                         word = KoreanWord(
                             public_id=str(row.get(public_id_column, "")),
-                            lemma=lemma,
+                            lemma=row.get(lemma_column, ""),
                             definition=row.get(definition_column),
                         )
                         all_words.append(word)
-                        batch_words_count += 1
 
-                logger.info(
-                    f"Batch {batch_count}: fetched {len(result.data)} rows, "
-                    f"{batch_words_count} words after filtering"
-                )
+                logger.info(f"Batch {batch_count}: fetched {len(result.data)} words")
 
                 # Check if we've fetched all data
                 if len(result.data) < batch_size:

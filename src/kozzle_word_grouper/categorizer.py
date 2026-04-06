@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -15,6 +16,31 @@ from kozzle_word_grouper.models import KoreanWord
 from kozzle_word_grouper.utils import get_logger
 
 logger = get_logger(__name__)
+
+
+class RateLimiter:
+    """Simple rate limiter for API calls."""
+
+    def __init__(self, calls_per_second: float = 2.0):
+        self.calls_per_second = calls_per_second
+        self.min_interval = 1.0 / calls_per_second if calls_per_second > 0 else 0
+        self._lock = threading.Lock()
+        self._last_call_time = 0.0
+
+    def acquire(self) -> None:
+        """Wait until we can make the next API call."""
+        if self.min_interval == 0:
+            return
+
+        with self._lock:
+            current_time = time.time()
+            time_since_last = current_time - self._last_call_time
+
+            if time_since_last < self.min_interval:
+                sleep_time = self.min_interval - time_since_last
+                time.sleep(sleep_time)
+
+            self._last_call_time = time.time()
 
 
 class Categorizer:
@@ -36,6 +62,8 @@ class Categorizer:
         max_workers: int = 4,
         max_retries: int = 3,
         retry_delay: float = 2.0,
+        rate_limit: float = 2.0,
+        cache_save_interval: int = 100,
     ) -> None:
         """Initialize categorizer with Ollama.
 
@@ -46,6 +74,8 @@ class Categorizer:
             max_workers: Number of concurrent workers.
             max_retries: Number of retry attempts per request.
             retry_delay: Delay between retries in seconds.
+            rate_limit: Maximum API calls per second (default: 2.0).
+            cache_save_interval: Save cache every N words (default: 100).
 
         Raises:
             OllamaConnectionError: If cannot connect to Ollama.
@@ -56,10 +86,16 @@ class Categorizer:
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.rate_limit = rate_limit
+        self.cache_save_interval = cache_save_interval
+        self.rate_limiter = RateLimiter(rate_limit)
 
         self._validate_connection()
 
-        logger.info(f"Initialized categorizer with model: {model_name}")
+        logger.info(
+            f"Initialized categorizer with model: {model_name}, "
+            f"max_workers={max_workers}, rate_limit={rate_limit} calls/sec"
+        )
 
     def _validate_connection(self) -> None:
         """Validate Ollama connection."""
@@ -178,6 +214,9 @@ JSON 형식으로 정확히 답변해주세요. 다른 텍스트는 포함하지
         """
         prompt = self._build_prompt(lemma, definition, classification_type)
 
+        # Apply rate limiting before making API call
+        self.rate_limiter.acquire()
+
         for attempt in range(self.max_retries):
             try:
                 response = requests.post(
@@ -293,7 +332,7 @@ JSON 형식으로 정확히 답변해주세요. 다른 텍스트는 포함하지
             return {"processed_words": {}, "metadata": {}}
 
         try:
-            with open(self.cache_file, "r", encoding="utf-8") as f:
+            with open(self.cache_file, encoding="utf-8") as f:
                 data = json.load(f)
             logger.info(f"Loaded {len(data.get('processed_words', {}))} cached words")
             return data
@@ -378,53 +417,66 @@ JSON 형식으로 정확히 답변해주세요. 다른 텍스트는 포함하지
             f"({cached_count} from cache, {len(words_to_process)} new)"
         )
 
+        completed = 0
+        total = len(words_to_process)
+
+        # Process in smaller batches to prevent overwhelming Ollama
+        batch_size = 20  # Process 20 words at a time
+        batch_delay = 0.5  # Wait 0.5s between batches
+
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self.categorize_word, word): word
-                for word in words_to_process
-            }
+            for batch_start in range(0, len(words_to_process), batch_size):
+                batch_end = min(batch_start + batch_size, len(words_to_process))
+                batch_words = words_to_process[batch_start:batch_end]
 
-            completed = 0
-            total = len(words_to_process)
+                # Add delay between batches (except first batch)
+                if batch_start > 0:
+                    time.sleep(batch_delay)
 
-            for future in as_completed(futures):
-                word = futures[future]
+                futures = {
+                    executor.submit(self.categorize_word, word): word
+                    for word in batch_words
+                }
 
-                try:
-                    categories = future.result()
+                for future in as_completed(futures):
+                    word = futures[future]
 
-                    processed_words[word.public_id] = {
-                        "lemma": word.lemma,
-                        "definition": word.definition,
-                        "categories": categories,
-                    }
+                    try:
+                        categories = future.result()
 
-                    completed += 1
+                        processed_words[word.public_id] = {
+                            "lemma": word.lemma,
+                            "definition": word.definition,
+                            "categories": categories,
+                        }
 
-                    if show_progress and completed % 10 == 0:
-                        total_processed = cached_count + completed
-                        percentage = (total_processed / len(words)) * 100
-                        logger.info(
-                            f"Categorized {completed}/{total} new words "
-                            f"({total_processed}/{len(words)} total, {percentage:.1f}%)"
-                        )
+                        completed += 1
 
-                    if completed % 50 == 0:
-                        cache_data["processed_words"] = processed_words
-                        self.save_cache(cache_data)
+                        if show_progress and completed % 10 == 0:
+                            total_processed = cached_count + completed
+                            percentage = (total_processed / len(words)) * 100
+                            logger.info(
+                                f"Categorized {completed}/{total} new words "
+                                f"({total_processed}/{len(words)} total, {percentage:.1f}%)"
+                            )
 
-                except CategorizationError as e:
-                    logger.error(f"Failed to categorize word '{word.lemma}': {e}")
-                    processed_words[word.public_id] = {
-                        "lemma": word.lemma,
-                        "definition": word.definition,
-                        "categories": {
-                            "하위개념": ["미분류"],
-                            "기능": ["미분류"],
-                            "사용맥락": ["미분류"],
-                        },
-                    }
-                    completed += 1
+                        # Save cache less frequently to reduce I/O overhead
+                        if completed % self.cache_save_interval == 0:
+                            cache_data["processed_words"] = processed_words
+                            self.save_cache(cache_data)
+
+                    except CategorizationError as e:
+                        logger.error(f"Failed to categorize word '{word.lemma}': {e}")
+                        processed_words[word.public_id] = {
+                            "lemma": word.lemma,
+                            "definition": word.definition,
+                            "categories": {
+                                "하위개념": ["미분류"],
+                                "기능": ["미분류"],
+                                "사용맥락": ["미분류"],
+                            },
+                        }
+                        completed += 1
 
         cache_data["processed_words"] = processed_words
         self.save_cache(cache_data)

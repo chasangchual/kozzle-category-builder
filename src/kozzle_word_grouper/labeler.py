@@ -3,11 +3,9 @@
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
 
 import requests
 
-from kozzle_word_grouper.exceptions import LabelGenerationError
 from kozzle_word_grouper.utils import get_logger
 
 logger = get_logger(__name__)
@@ -43,7 +41,7 @@ class ClusterLabeler:
         """Load label cache from file."""
         if self.cache_file and self.cache_file.exists():
             try:
-                with open(self.cache_file, "r", encoding="utf-8") as f:
+                with open(self.cache_file, encoding="utf-8") as f:
                     self._cache = json.load(f)
                 logger.info(f"Loaded {len(self._cache)} cached labels")
             except Exception as e:

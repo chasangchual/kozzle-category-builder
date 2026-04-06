@@ -236,7 +236,7 @@ class WordGroupExporter:
                     # Show first few words with public_id
                     if "words" in info and len(info["words"]) > 0:
                         words = info["words"][:5]
-                        f.write(f"   단어 목록 (Sample words):\n")
+                        f.write("   단어 목록 (Sample words):\n")
                         for word in words:
                             if isinstance(word, dict):
                                 f.write(
@@ -503,7 +503,7 @@ def export_predefined_categorization(
 
     try:
         categories_file = Path(categories_file)
-        with open(categories_file, "r", encoding="utf-8") as f:
+        with open(categories_file, encoding="utf-8") as f:
             categories_data = json.load(f)
 
         total_categories = {

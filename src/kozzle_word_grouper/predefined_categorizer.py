@@ -1,7 +1,6 @@
 """Classify Korean words into pre-defined categories using LLM binary classification."""
 
 import json
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -10,6 +9,7 @@ from typing import Any
 
 import requests
 
+from kozzle_word_grouper.categorizer import RateLimiter
 from kozzle_word_grouper.exceptions import CategorizationError, OllamaConnectionError
 from kozzle_word_grouper.models import KoreanWord
 from kozzle_word_grouper.utils import get_logger
@@ -35,6 +35,8 @@ class PredefinedCategorizer:
         max_retries: int = 3,
         retry_delay: float = 2.0,
         cache_file: Path | str | None = None,
+        rate_limit: float = 2.0,
+        cache_save_interval: int = 50,
     ) -> None:
         """Initialize predefined categorizer.
 
@@ -46,6 +48,8 @@ class PredefinedCategorizer:
             max_retries: Number of retry attempts per request.
             retry_delay: Delay between retries in seconds.
             cache_file: Path to cache file for resume capability.
+            rate_limit: Maximum API calls per second (default: 2.0).
+            cache_save_interval: Save cache every N words (default: 50).
 
         Raises:
             OllamaConnectionError: If cannot connect to Ollama.
@@ -58,6 +62,9 @@ class PredefinedCategorizer:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.cache_file = Path(cache_file) if cache_file else None
+        self.rate_limit = rate_limit
+        self.cache_save_interval = cache_save_interval
+        self.rate_limiter = RateLimiter(rate_limit)
 
         if not self.categories_file.exists():
             raise FileNotFoundError(
@@ -67,7 +74,10 @@ class PredefinedCategorizer:
         self.categories = self._load_categories(self.categories_file)
         self._validate_connection()
 
-        logger.info(f"Initialized predefined categorizer with model: {model_name}")
+        logger.info(
+            f"Initialized predefined categorizer with model: {model_name}, "
+            f"max_workers={max_workers}, rate_limit={rate_limit} calls/sec"
+        )
         logger.info(
             f"Loaded {self._count_categories()} categories from {self.categories_file}"
         )
@@ -96,7 +106,7 @@ class PredefinedCategorizer:
             CategorizationError: If file cannot be parsed.
         """
         try:
-            with open(categories_file, "r", encoding="utf-8") as f:
+            with open(categories_file, encoding="utf-8") as f:
                 data = json.load(f)
 
             categories = {
@@ -163,6 +173,9 @@ class PredefinedCategorizer:
         Raises:
             CategorizationError: If all retries fail.
         """
+        # Apply rate limiting before making API call
+        self.rate_limiter.acquire()
+
         for attempt in range(self.max_retries):
             try:
                 response = requests.post(
@@ -281,7 +294,7 @@ class PredefinedCategorizer:
             return {"processed_words": {}, "metadata": {}}
 
         try:
-            with open(self.cache_file, "r", encoding="utf-8") as f:
+            with open(self.cache_file, encoding="utf-8") as f:
                 data = json.load(f)
             logger.info(f"Loaded {len(data.get('processed_words', {}))} cached words")
             return data
@@ -356,54 +369,68 @@ class PredefinedCategorizer:
         )
         logger.info(f"Total categories per word: {total_categories}")
         logger.info(f"Estimated LLM calls: {len(words_to_process) * total_categories}")
-        logger.info(f"Using {self.max_workers} concurrent workers")
+        logger.info(f"Using {self.max_workers} concurrent workers with rate limiting")
 
         results = list(processed_words.values())
 
+        completed = 0
+        total = len(words_to_process)
+
+        # Process in smaller batches to prevent overwhelming Ollama
+        # Since each word triggers 150 API calls, we need smaller batches
+        batch_size = 5  # Only 5 words at a time (each word = 150 calls)
+        batch_delay = 2.0  # Wait 2s between batches (more conservative)
+
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self.classify_word, word): word
-                for word in words_to_process
-            }
+            for batch_start in range(0, len(words_to_process), batch_size):
+                batch_end = min(batch_start + batch_size, len(words_to_process))
+                batch_words = words_to_process[batch_start:batch_end]
 
-            completed = 0
-            total = len(words_to_process)
+                # Add delay between batches (except first batch)
+                if batch_start > 0:
+                    time.sleep(batch_delay)
 
-            for future in as_completed(futures):
-                word = futures[future]
+                futures = {
+                    executor.submit(self.classify_word, word): word
+                    for word in batch_words
+                }
 
-                try:
-                    result = future.result()
+                for future in as_completed(futures):
+                    word = futures[future]
 
-                    processed_words[word.public_id] = result
-                    results.append(result)
+                    try:
+                        result = future.result()
 
-                    completed += 1
+                        processed_words[word.public_id] = result
+                        results.append(result)
 
-                    if show_progress and completed % 1 == 0:
-                        total_processed = cached_count + completed
-                        percentage = (total_processed / len(words)) * 100
-                        logger.info(
-                            f"Categorized {completed}/{total} new words "
-                            f"({total_processed}/{len(words)} total, {percentage:.1f}%)"
+                        completed += 1
+
+                        if show_progress and completed % 1 == 0:
+                            total_processed = cached_count + completed
+                            percentage = (total_processed / len(words)) * 100
+                            logger.info(
+                                f"Categorized {completed}/{total} new words "
+                                f"({total_processed}/{len(words)} total, {percentage:.1f}%)"
+                            )
+
+                        # Save cache less frequently (every cache_save_interval words)
+                        if completed % self.cache_save_interval == 0:
+                            cache_data["processed_words"] = processed_words
+                            self.save_cache(cache_data)
+
+                    except CategorizationError as e:
+                        logger.error(f"Failed to categorize word '{word.lemma}': {e}")
+                        results.append(
+                            {
+                                "public_id": word.public_id,
+                                "lemma": word.lemma,
+                                "definition": word.definition,
+                                "concept_categories": [],
+                                "function_categories": [],
+                                "usage_context_categories": [],
+                            }
                         )
-
-                    if completed % 10 == 0:
-                        cache_data["processed_words"] = processed_words
-                        self.save_cache(cache_data)
-
-                except CategorizationError as e:
-                    logger.error(f"Failed to categorize word '{word.lemma}': {e}")
-                    results.append(
-                        {
-                            "public_id": word.public_id,
-                            "lemma": word.lemma,
-                            "definition": word.definition,
-                            "concept_categories": [],
-                            "function_categories": [],
-                            "usage_context_categories": [],
-                        }
-                    )
                     completed += 1
 
         cache_data["processed_words"] = processed_words

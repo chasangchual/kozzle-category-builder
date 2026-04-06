@@ -1,13 +1,13 @@
 """Embedding generation using Ollama API."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
-from numpy.typing import NDArray
 import requests
+from numpy.typing import NDArray
 
 from kozzle_word_grouper.exceptions import EmbeddingError, OllamaConnectionError
 from kozzle_word_grouper.models import KoreanWord

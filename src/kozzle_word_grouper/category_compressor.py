@@ -3,7 +3,6 @@
 import json
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -754,7 +753,7 @@ JSON 형식으로 정확히 답변해주세요. 다른 텍스트는 포함하지
             raise CategorizationError(f"Categorization file not found: {file_path}")
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             logger.info(f"Loaded categorization file: {file_path}")
